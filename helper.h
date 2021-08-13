@@ -68,16 +68,19 @@ uint8_t randomStock[256];
 uint8_t randomIndex = 0;
 float lastBattery = 0.0;
 double batteryUpdateDelay;
-uint32_t myFreq = 868.125e6;
-int mySF = 10;
+uint32_t myFreq = 863;
+int mySF = 7;
 uint8_t myBW = 0;
 uint8_t myCR = 5;
 // See above
+// double BWs[10 = {125, 250, 500, 7.8, 10.4, 15.6, 20.8, 31.25, 41.7, 62.5};
+// a=INDEX(natural order);b=(a+3);if(b>6)b=b-10;BWs[b];---> new order
 double BWs[10] = {
   125.0, 250.0, 500.0, 62.5, 41.7, 31.25, 20.8, 15.6, 10.4, 7.8
 };
 uint16_t pingCounter = 0;
 
+#define RX_TIMEOUT_VALUE 30000
 
 #ifdef Pavel
 // enable autoPing for Pavel
@@ -243,7 +246,7 @@ void sendPacket(char *buff) {
 #endif
   delay(500);
   digitalWrite(LED_BLUE, LOW);
-  Radio.Rx(3000);
+  Radio.Rx(RX_TIMEOUT_VALUE);
 }
 
 int16_t decryptECB(uint8_t* myBuf, uint8_t olen) {
@@ -459,7 +462,7 @@ void setFQ(char* buff) {
     Radio.Standby();
     Radio.SetChannel(myFreq);
     delay(100);
-    Radio.Rx(3000);
+    Radio.Rx(RX_TIMEOUT_VALUE);
   }
 }
 
@@ -489,7 +492,7 @@ void setSF(char* buff) {
     Radio.Standby();
     Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
     delay(100);
-    Radio.Rx(3000);
+    Radio.Rx(RX_TIMEOUT_VALUE);
   }
 }
 
@@ -534,7 +537,7 @@ void setBW(char* buff) {
     Radio.Standby();
     Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
     delay(100);
-    Radio.Rx(3000);
+    Radio.Rx(RX_TIMEOUT_VALUE);
   }
 }
 
@@ -550,7 +553,7 @@ void setTxPower(char* buff) {
     Radio.Standby();
     Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
     delay(100);
-    Radio.Rx(3000);
+    Radio.Rx(RX_TIMEOUT_VALUE);
 #ifdef NEED_DEBUG
     Serial.println("TxPower set to " + String(TxPower));
 #endif
@@ -570,7 +573,7 @@ void setCR(char* buff) {
     Radio.Standby();
     Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
     delay(100);
-    Radio.Rx(3000);
+    Radio.Rx(RX_TIMEOUT_VALUE);
 #ifdef NEED_DEBUG
     Serial.println("C/R set to 4/" + String(cr));
 #endif
@@ -640,7 +643,7 @@ void sendJSONPacket() {
     Radio.Send(msgBuf, olen);
   }
   delay(1000);
-  Radio.Rx(3000);
+  Radio.Rx(RX_TIMEOUT_VALUE);
   /*
     RegRssiValue (0x1B)
     Current RSSI value (dBm)
@@ -653,7 +656,7 @@ void sendJSONPacket() {
 #endif
   delay(500);
   digitalWrite(LED_BLUE, LOW);
-  Radio.Rx(3000);
+  Radio.Rx(RX_TIMEOUT_VALUE);
   Radio.Write(REG_RX_GAIN, 0x96); // TURN ON LNA FOR RECEIVE
 }
 
@@ -794,7 +797,7 @@ void OnTxDone(void) {
   // if (bleUARTisConnected) {
   // bleuart.print("OnTxDone\n");
   // }
-  Radio.Rx(3000);
+  Radio.Rx(RX_TIMEOUT_VALUE);
 }
 
 uint8_t calcMaxPayload() {

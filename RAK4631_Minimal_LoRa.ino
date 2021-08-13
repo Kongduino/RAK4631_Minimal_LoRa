@@ -292,10 +292,11 @@ void setup() {
   // Set Radio channel
   Radio.SetChannel(myFreq);
   // Set Radio RX configuration
+  Radio.SetTxConfig(MODEM_LORA, TxPower, 0, myBW, mySF, myCR, 8, false, true, 0, 0, false, 3000);
   Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
   // Start LoRa
   Serial.println("Starting Radio.Rx");
-  Radio.Rx(3000);
+  Radio.Rx(RX_TIMEOUT_VALUE);
   SX126xSetTxParams(TxPower, RADIO_RAMP_40_US);
 
 #ifdef Pavel
@@ -627,7 +628,7 @@ void displayHT() {
   oled.println(buff);
 #endif // NEED_SGP30
 }
-#endif // NEED_SSD1306
+#endif // NEED_HDC1080 || NEED_BME || NEED_DHT
 #endif // NEED_SSD1306
 
 #ifdef NEED_SHATEST
@@ -853,7 +854,7 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
 #endif // NEED_DEBUG
     delay(dl);
     sendPong((char*)myID, rssi);
-    Radio.Rx(3000);
+    Radio.Rx(RX_TIMEOUT_VALUE);
   } else if (strcmp(cmd, "pong") == 0) {
     int rcvRSSI = doc["rcvRSSI"];
 #ifdef NEED_DEBUG
@@ -926,7 +927,7 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
         Radio.Standby();
         Radio.SetChannel(myFreq);
         delay(100);
-        Radio.Rx(3000);
+        Radio.Rx(RX_TIMEOUT_VALUE);
 #ifdef NEED_DEBUG
         Serial.println("Frequency set to " + String(myFreq / 1e6, 3) + " MHz");
 #endif // NEED_DEBUG
@@ -986,7 +987,7 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
         Radio.Standby();
         Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
         delay(100);
-        Radio.Rx(3000);
+        Radio.Rx(RX_TIMEOUT_VALUE);
 #ifdef NEED_DEBUG
         Serial.println("Bandwidth set to " + String(BWs[myBW], 3) + " KHz");
 #endif // NEED_DEBUG
@@ -1072,10 +1073,10 @@ void OnRxTimeout(void) {
   //  u8g2.drawStr(3, 15, "OnRxTimeout");
   //  u8g2.sendBuffer(); // transfer internal memory to the display
   Serial.println("OnRxTimeout");
-  Radio.Rx(3000);
+  Radio.Rx(RX_TIMEOUT_VALUE);
 }
 
 void OnRxError(void) {
   Serial.println("OnRxError");
-  Radio.Rx(3000);
+  Radio.Rx(RX_TIMEOUT_VALUE);
 }

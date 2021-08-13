@@ -98,7 +98,7 @@ void handleSerial() {
         OCP_ON = true;
         Radio.Standby();
         Radio.Write(REG_OCP, 0x18); // MAX OCP
-        Radio.Rx(3000);
+        Radio.Rx(RX_TIMEOUT_VALUE);
         Serial.println("--> OCP Trim on, Max OCP");
         return;
       } else if (msgBuf[3] == '0') {
@@ -106,7 +106,7 @@ void handleSerial() {
         OCP_ON = false;
         Radio.Standby();
         Radio.Write(REG_OCP, 0); // MAX OCP
-        Radio.Rx(3000);
+        Radio.Rx(RX_TIMEOUT_VALUE);
         Serial.println("--> OCP Trim off");
         return;
       }
