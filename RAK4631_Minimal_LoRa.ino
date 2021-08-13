@@ -14,6 +14,8 @@
 //#define NEED_DHT
 // Uncomment this next line if you want to use an SSD1306 OLED
 #define NEED_SSD1306 1
+// Detect the presence of an OLED at 0x2c/0x3d
+// Larry Bank has code for that
 // Uncomment this next line if you want to use an HDC1080
 //#define NEED_HDC1080 1
 // Uncomment this next line if you want to use a CCS811
@@ -1069,7 +1071,6 @@ void OnRxTimeout(void) {
   //  u8g2.setFont(u8g2_font_courB08_tf); // choose a suitable font
   //  u8g2.drawStr(3, 15, "OnRxTimeout");
   //  u8g2.sendBuffer(); // transfer internal memory to the display
-  // Serial.println("OnRxTimeout");
   Serial.println("OnRxTimeout");
   Radio.Rx(3000);
 }

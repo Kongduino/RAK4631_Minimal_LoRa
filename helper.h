@@ -104,12 +104,13 @@ void array2hex(uint8_t *, size_t, uint8_t *, uint8_t);
 void hex2array(uint8_t *, uint8_t *, size_t);
 void sendPacket(char *);
 void setPWD(char *);
+void prepareJSONPacket(char *);
 void setPongBack(bool);
 void stockUpRandom();
 void showHelp();
 uint8_t getRandomByte();
 uint16_t getRamdom16();
-void getRandomBytes(uint8_t *buff, uint8_t count);
+void getRandomBytes(uint8_t *, uint8_t);
 void getBattery();
 void setFQ(char*);
 void setSF(char*);
@@ -121,6 +122,8 @@ void sendJSONPacket();
 void savePrefs();
 void setAutoPing(char *);
 void handleSerial();
+uint8_t calcMaxPayload();
+bool testLoRaBusy();
 
 void hex2array(uint8_t *src, uint8_t *dst, size_t sLen) {
   size_t i, n = 0;
@@ -192,7 +195,7 @@ void setPWD(char *buff) {
 }
 
 void sendPacket(char *buff) {
-  Radio.Standby();Radio.Standby();
+  Radio.Standby();
   // LoRa.writeRegister(REG_LNA, 00); // TURN OFF LNA FOR TRANSMIT
   uint16_t olen = strlen(buff);
   memcpy(encBuf + 8, buff, olen);
@@ -234,13 +237,13 @@ void sendPacket(char *buff) {
   } else {
     Radio.Send((uint8_t *)buff, olen);
   }
+  delay(1000);
 #ifdef NEED_DEBUG
   Serial.println(" done!");
 #endif
   delay(500);
   digitalWrite(LED_BLUE, LOW);
   Radio.Rx(3000);
-  Radio.Write(REG_RX_GAIN, 0x96); // TURN ON LNA FOR RECEIVE
 }
 
 int16_t decryptECB(uint8_t* myBuf, uint8_t olen) {
@@ -445,10 +448,6 @@ void setFQ(char* buff) {
 #endif
   } else {
     myFreq = fq;
-    Radio.Standby();
-    Radio.SetChannel(myFreq);
-    delay(100);
-    Radio.Rx(3000);
 #ifdef NEED_DEBUG
     Serial.println("Frequency set to " + String(myFreq / 1e6, 3) + " MHz");
 #endif
@@ -457,6 +456,10 @@ void setFQ(char* buff) {
     oled.println(myFreq);
 #endif // NEED_SSD1306
     savePrefs();
+    Radio.Standby();
+    Radio.SetChannel(myFreq);
+    delay(100);
+    Radio.Rx(3000);
   }
 }
 
@@ -470,18 +473,68 @@ void setSF(char* buff) {
 #endif
   } else {
     mySF = sf;
-    Radio.Standby();
-    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
-    delay(100);
-    Radio.Rx(3000);
+    uint8_t mpl = calcMaxPayload();
 #ifdef NEED_DEBUG
     Serial.println("SF set to " + String(mySF));
+    sprintf((char*)msgBuf, "Maximum payload at SF %d / BW %3.2f: %d bytes", mySF, BWs[myBW], mpl);
+    Serial.println((char*)msgBuf);
 #endif
 #ifdef NEED_SSD1306
     oled.print("New SF: ");
     oled.println(mySF);
+    oled.print("Max payload: ");
+    oled.println(mpl);
 #endif // NEED_SSD1306
     savePrefs();
+    Radio.Standby();
+    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
+    delay(100);
+    Radio.Rx(3000);
+  }
+}
+
+void setBW(char* buff) {
+  int bw = atoi(buff);
+  /*Signal bandwidth:
+    0000  7.8 kHz
+    0001  10.4 kHz
+    0010  15.6 kHz
+    0011  20.8kHz
+    0100  31.25 kHz
+    0101  41.7 kHz
+    0110  62.5 kHz
+    0111  125 kHz
+    1000  250 kHz
+    1001  500 kHz
+  */
+  // clearFrame();
+  if (bw < 0 || bw > 9) {
+#ifdef NEED_DEBUG
+    Serial.println("Requested BW (" + String(bw) + ") is invalid!");
+#endif
+  } else {
+    String s = "BW set to: " + String(bw);
+    myBW = bw;
+    uint8_t mpl = calcMaxPayload();
+#ifdef NEED_DEBUG
+    Serial.println("BW set to " + String(BWs[myBW])) + " KHz";
+    sprintf((char*)msgBuf, "Maximum payload at SF %d / BW %3.2f: %d bytes", mySF, BWs[myBW], mpl);
+    Serial.println((char*)msgBuf);
+#endif
+#ifdef NEED_SSD1306
+    oled.print("New BW: ");
+    oled.print(myBW);
+    oled.print(" ie ");
+    oled.print(BWs[myBW]);
+    oled.println(" KHz");
+    oled.print("Max payload: ");
+    oled.println(mpl);
+#endif // NEED_SSD1306
+    savePrefs();
+    Radio.Standby();
+    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
+    delay(100);
+    Radio.Rx(3000);
   }
 }
 
@@ -529,46 +582,6 @@ void setCR(char* buff) {
   }
 }
 
-void setBW(char* buff) {
-  int bw = atoi(buff);
-  /*Signal bandwidth:
-    0000  7.8 kHz
-    0001  10.4 kHz
-    0010  15.6 kHz
-    0011  20.8kHz
-    0100  31.25 kHz
-    0101  41.7 kHz
-    0110  62.5 kHz
-    0111  125 kHz
-    1000  250 kHz
-    1001  500 kHz
-  */
-  // clearFrame();
-  if (bw < 0 || bw > 9) {
-#ifdef NEED_DEBUG
-    Serial.println("Requested BW (" + String(bw) + ") is invalid!");
-#endif
-  } else {
-    String s = "BW set to: " + String(bw);
-    myBW = bw;
-    Radio.Standby();
-    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
-    delay(100);
-    Radio.Rx(3000);
-#ifdef NEED_DEBUG
-    Serial.println("BW set to " + String(BWs[myBW])) + " KHz";
-#endif
-#ifdef NEED_SSD1306
-    oled.print("New BW: ");
-    oled.print(myBW);
-    oled.print(" ie ");
-    oled.print(BWs[myBW]);
-    oled.println(" KHz");
-#endif // NEED_SSD1306
-    savePrefs();
-  }
-}
-
 void setDeviceName(char *truc) {
   memset(deviceName, 0, 33);
   memcpy(deviceName, truc, strlen(truc));
@@ -593,7 +606,6 @@ void prepareJSONPacket(char *buff) {
   memcpy(x, deviceName, 33);
   doc["from"] = x;
   serializeJson(doc, (char*)msgBuf, BUFF_LENGTH);
-  sendJSONPacket();
 }
 
 void sendJSONPacket() {
@@ -614,15 +626,20 @@ void sendJSONPacket() {
   Serial.println("Sending packet...");
 #endif
   // Now send a packet
-  digitalWrite(LED_BLUE, HIGH);
-  // Radio.Standby();
-  // delay(100);
+  if (testLoRaBusy()) {
+#ifdef NEED_DEBUG
+    Serial.println("\n /!\\ LoRa is busy, aborting...");
+    return;
+#endif
+  }
+  Radio.Standby();
   if (needEncryption) {
     hexDump(encBuf, olen);
     Radio.Send(encBuf, olen);
   } else {
     Radio.Send(msgBuf, olen);
   }
+  delay(1000);
   Radio.Rx(3000);
   /*
     RegRssiValue (0x1B)
@@ -778,4 +795,50 @@ void OnTxDone(void) {
   // bleuart.print("OnTxDone\n");
   // }
   Radio.Rx(3000);
+}
+
+uint8_t calcMaxPayload() {
+  // https://www.thethingsnetwork.org/airtime-calculator
+  if (myFreq > 900.0) {
+    if (mySF == 7 && myBW == 0) return 242;
+    if (mySF == 7 && myBW == 2) return 222;
+    if (mySF == 8 && myBW == 2) return 222;
+    if (mySF == 8 && myBW == 0) return 125;
+    if (mySF == 9 && myBW == 2) return 222;
+    if (mySF == 9 && myBW == 0) return 53;
+    if (mySF == 10 && myBW == 2) return 222;
+    if (mySF == 10 && myBW == 0) return 11;
+    if (mySF == 11 && myBW == 2) return 109;
+    if (mySF == 12 && myBW == 2) return 33;
+  } else if (myFreq >= 860.9) {
+    if (mySF == 7 && (myBW == 0 || myBW == 1)) return 222;
+    if (mySF == 8 &&  myBW == 0) return 222;
+    if (mySF == 9 &&  myBW == 1) return 115;
+    if ((mySF == 10 || mySF == 11 || mySF == 12) & (myBW == 0)) return 51;
+    return 0;
+  } else return 0;
+}
+
+bool testLoRaBusy() {
+  digitalWrite(LED_BLUE, HIGH);
+  digitalWrite(LED_GREEN, LOW);
+  uint8_t status = 255;
+  int PIN_LORA_BUSY = 29; // LORA SPI BUSY
+  int timeout = 3000;
+  while (digitalRead(PIN_LORA_BUSY) == HIGH) {
+    delay(250);
+    digitalWrite(LED_GREEN, status);
+    status = 255 - status;
+    digitalWrite(LED_BLUE, status);
+    timeout -= 1;
+    if (timeout < 0) {
+      Serial.println("[SX126xWaitOnBusy] Timeout waiting for BUSY low");
+      digitalWrite(LED_BLUE, LOW);
+      digitalWrite(LED_GREEN, HIGH);
+      return true;
+    }
+  }
+  digitalWrite(LED_BLUE, LOW);
+  digitalWrite(LED_GREEN, HIGH);
+  return false;
 }
