@@ -711,6 +711,14 @@ void shaTest() {
 
 #endif // NEED_SHATEST
 
+void OnTxDone(void) {
+  Serial.println("OnTxDone");
+  // if (bleUARTisConnected) {
+  // bleuart.print("OnTxDone\n");
+  // }
+  Radio.Rx(RX_TIMEOUT_VALUE);
+}
+
 void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
   digitalWrite(LED_GREEN, HIGH); // Turn on Green LED
 #ifdef NEED_SSD1306

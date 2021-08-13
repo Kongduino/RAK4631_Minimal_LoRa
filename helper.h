@@ -68,7 +68,7 @@ uint8_t randomStock[256];
 uint8_t randomIndex = 0;
 float lastBattery = 0.0;
 double batteryUpdateDelay;
-uint32_t myFreq = 863;
+uint32_t myFreq = 863e6;
 int mySF = 7;
 uint8_t myBW = 0;
 uint8_t myCR = 5;
@@ -790,14 +790,6 @@ void setAutoPing(char* buff) {
   pingFrequency = fq;
   needPing = true;
   lastAutoPing = millis();
-}
-
-void OnTxDone(void) {
-  //Serial.println("OnTxDone");
-  // if (bleUARTisConnected) {
-  // bleuart.print("OnTxDone\n");
-  // }
-  Radio.Rx(RX_TIMEOUT_VALUE);
 }
 
 uint8_t calcMaxPayload() {
