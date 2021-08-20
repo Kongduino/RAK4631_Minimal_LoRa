@@ -1,3 +1,4 @@
+void hexDump(unsigned char *, uint16_t);
 void hexDump(unsigned char *buf, uint16_t len) {
   String s = "|", t = "| |";
   Serial.println(F("  |.0 .1 .2 .3 .4 .5 .6 .7 .8 .9 .a .b .c .d .e .f |"));
@@ -29,20 +30,27 @@ void hexDump(unsigned char *buf, uint16_t len) {
   return (buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3];
   }
 */
+#define RANDOM_NUMBER_GENERATORBASEADDR 0x0819
+#define REG_ANA_LNA 0x08E2
+#define REG_ANA_MIXER 0x08E5
 
-void fillRandom(uint8_t *rb, uint16_t len) {
-  uint16_t count = 0, times = len / 4;
-  for (uint8_t i = 0; i < times; i++) {
-    SX126xReadRegisters(RANDOM_NUMBER_GENERATORBASEADDR, rb + (i * 4), 4);
-    count += 4;
+void fillRandom() {
+  // randomStock
+  uint32_t number = 0;
+  uint8_t regAnaLna = 0, regAnaMixer = 0, cnt = 0;
+  regAnaLna = SX126xReadRegister(REG_ANA_LNA);
+  SX126xWriteRegister(REG_ANA_LNA, regAnaLna & ~(1 << 0));
+  regAnaMixer = SX126xReadRegister(REG_ANA_MIXER);
+  SX126xWriteRegister(REG_ANA_MIXER, regAnaMixer & ~(1 << 7));
+  // Set radio in continuous reception
+  SX126xSetRx(0xFFFFFF); // Rx Continuous
+  for (uint8_t i = 0; i < 32; i++) {
+    SX126xReadRegisters(RANDOM_NUMBER_GENERATORBASEADDR, (uint8_t*)&number, 4);
+    Serial.println("number 0x" + String(number, HEX));
+    memcpy(randomStock + cnt, (uint8_t*)&number, 4);
+    cnt += 4;
   }
-  if (count < len) {
-    uint8_t buf[] = {0, 0, 0, 0};
-    SX126xReadRegisters(RANDOM_NUMBER_GENERATORBASEADDR, buf, 4);
-    uint8_t i = 0;
-    while (count < len) {
-      rb[count++] = buf[i++];
-    }
-  }
-  hexDump(rb, len);
+  SX126xSetStandby(STDBY_RC);
+  SX126xWriteRegister(REG_ANA_LNA, regAnaLna);
+  SX126xWriteRegister(REG_ANA_MIXER, regAnaMixer);
 }

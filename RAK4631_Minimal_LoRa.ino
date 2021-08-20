@@ -6,14 +6,14 @@
 // you plug in an OLED.
 #define NEED_DEBUG 1
 // Uncomment this next line if you want to use a BME680
-// #define NEED_BME 1
+//#define NEED_BME 1
 // Uncomment this next line if you want to use pins 5 & 6 for Gnd/Vcc
 // Particularly useful on a breadboard as they are next to SDA/SCL
 // #define NEED_SIDE_I2C 1
 // Uncomment this next line if you want to use a DHTxx
 //#define NEED_DHT
 // Uncomment this next line if you want to use an SSD1306 OLED
-#define NEED_SSD1306 1
+//#define NEED_SSD1306 1
 // Detect the presence of an OLED at 0x2c/0x3d
 // Larry Bank has code for that
 // Uncomment this next line if you want to use an HDC1080
@@ -22,15 +22,19 @@
 //#define NEED_CCS811 1
 // Uncomment this next line if you want to use an SGP30
 //#define NEED_SGP30 1
+// Uncomment this next line if you want to use an SHTC3
+//#define NEED_SHTC3 1
 // Uncomment this next line if you want to use an EEPROM
 // #define NEED_EEPROM
+// Uncomment this next line if you want to do a SHA self-test
 // #define NEED_SHATEST
+// Uncomment this next line if you want to use the RAK12500 WisBlock GNSS Location Module
+//#define NEED_RAK12500
 
 #include <SPI.h>
 #include <Wire.h>
 #include <SX126x-RAK4630.h>
 // Click here to get the library: http://librarymanager/All#LoRa
-#include "Sx1262LoRandom.h"
 #include "aes.c"
 #include "sha2.c"
 
@@ -80,7 +84,24 @@ SSD1306AsciiWire oled;
 #include "sgp30.h"
 // https://github.com/Seeed-Studio/SGP30_Gas_Sensor
 uint16_t tvoc_co2[2] = {0};
-void displaySGP30();
+
+void displaySGP30() {
+  s16 err = 0;
+  u16 tvoc_ppb, co2_eq_ppm;
+  err = sgp_measure_iaq_blocking_read(&tvoc_ppb, &co2_eq_ppm);
+  if (err == STATUS_OK) {
+    tvoc_co2[0] = tvoc_ppb;
+    tvoc_co2[1] = co2_eq_ppm;
+    char buff[32];
+    sprintf((char*)msgBuf, "tVOC: %d co2: %d\n", tvoc_co2[0], tvoc_co2[1]);
+    Serial.print((char*)msgBuf);
+#ifdef NEED_SSD1306
+    displayHT();
+#endif // NEED_SSD1306
+  } else {
+    Serial.println("error reading IAQ values\n");
+  }
+}
 #endif // NEED_SGP30
 
 #ifdef NEED_HDC1080
@@ -100,6 +121,37 @@ uint16_t tvoc_co2[2] = {0};
 #define PIN_NOT_INT 6
 CCS811 myCCS811(CCS811_ADDR);
 #endif // NEED_CCS811
+
+void displayHDC1080() {
+  char buff[48];
+  temp_hum_val[0] = hdc1080.readHumidity();
+  temp_hum_val[1] = hdc1080.readTemperature();
+  sprintf((char*)msgBuf, "Temp: %2.2f C, Humidity: %2.2f%%\n", temp_hum_val[1], temp_hum_val[0]);
+  Serial.print((char*)msgBuf);
+#ifdef NEED_CCS811 // Linked to NEED_HDC1080
+  // Look for interrupt request from CCS811
+  if (digitalRead(PIN_NOT_INT) == 0) {
+    // Wake up the CCS811 logic engine
+    digitalWrite(PIN_NOT_WAKE, 0);
+    // Need to wait at least 50 µs
+    delay(1);
+    // Interrupt signal caught, so cause the CCS811 to run its algorithm
+    myCCS811.readAlgorithmResults(); // Calling this function updates the global tVOC and CO2 variables
+    tvoc_co2[0] = myCCS811.getTVOC();
+    tvoc_co2[1] = myCCS811.getCO2();
+    char buff[32];
+    sprintf((char*)msgBuf, "tVOC: %d co2: %d\n", tvoc_co2[0], tvoc_co2[1]);
+    Serial.print((char*)msgBuf);
+    // Now put the CCS811's logic engine to sleep
+    digitalWrite(PIN_NOT_WAKE, 1);
+    // Need to be asleep for at least 20 µs
+  }
+#endif // NEED_CCS811
+#ifdef NEED_SSD1306
+  displayHT();
+#endif // NEED_SSD1306
+}
+
 #endif // NEED_HDC1080
 
 #ifdef NEED_BME
@@ -107,8 +159,101 @@ CCS811 myCCS811(CCS811_ADDR);
 // Click here to get the library: http://librarymanager/All#ClosedCube_BME680
 ClosedCube_BME680 bme680;
 double lastReading = 0;
+float temp_hum_val[2] = {0};
 #define PING_DELAY 300000 // 5 minutes
+
+void displayBME680() {
+#ifdef NEED_SSD1306
+  oled.println("displayBME680");
+#endif // NEED_SSD1306
+#ifdef NEED_DEBUG
+  Serial.println("BME680");
+#endif // NEED_DEBUG
+  ClosedCube_BME680_Status status = bme680.readStatus();
+  if (status.newDataFlag) {
+    double temp = bme680.readTemperature();
+    double pres = bme680.readPressure();
+    double hum = bme680.readHumidity();
+    // save the values in the same global array, so that they can be sent in packets
+    temp_hum_val[0] = (float)hum;
+    temp_hum_val[1] = (float)temp;
+#ifdef NEED_SSD1306
+    displayHT();
+#endif // NEED_SSD1306
+#ifdef NEED_DEBUG
+    sprintf((char*)msgBuf, "result: T = % f C, RH = % f % %, P = % d hPa\n", temp, hum, pres);
+    Serial.println((char*)msgBuf);
+#endif // NEED_DEBUG
+    lastReading = millis();
+  }
+}
 #endif // NEED_BME
+
+#ifdef NEED_SHTC3
+#include "SparkFun_SHTC3.h" //Click here to get the library: http://librarymanager/All#SparkFun_SHTC3
+SHTC3 g_shtc3; // Declare an instance of the SHTC3 class
+double lastReading = 0;
+float temp_hum_val[2] = {0};
+#define PING_DELAY 300000 // 5 minutes
+
+void errorDecoder(SHTC3_Status_TypeDef message) {
+  // The errorDecoder function prints "SHTC3_Status_TypeDef" resultsin a human-friendly way
+  switch (message) {
+    case SHTC3_Status_Nominal:
+      Serial.print("Nominal");
+      break;
+    case SHTC3_Status_Error:
+      Serial.print("Error");
+      break;
+    case SHTC3_Status_CRC_Fail:
+      Serial.print("CRC Fail");
+      break;
+    default:
+      Serial.print("Unknown return code");
+      break;
+  }
+}
+
+void displaySHTC3() {
+#ifdef NEED_SSD1306
+  oled.println("displaySHTC3");
+#endif // NEED_SSD1306
+  // Reading temperature or humidity takes about 250 milliseconds!
+  // Sensor readings may also be up to 2 seconds 'old' (it's a very slow sensor)
+  //  if (dht.readTempAndHumidity(temp_hum_val)) {
+  g_shtc3.update();
+  if (g_shtc3.lastStatus == SHTC3_Status_Nominal) {
+    // You can also assess the status of the last command by checking the ".lastStatus" member of the object
+    temp_hum_val[1] = g_shtc3.toDegC();
+    temp_hum_val[0] = g_shtc3.toPercent();
+    if (g_shtc3.passRHcrc) {
+      // Like "passIDcrc" this is true when the RH value is valid from the sensor (but not necessarily up-to-date in terms of time)
+      Serial.println(" . RH checksum passed");
+    } else {
+      Serial.println(" /!\\ RH checksum failed");
+    }
+    if (g_shtc3.passTcrc) {
+      // Like "passIDcrc" this is true when the T value is valid from the sensor (but not necessarily up-to-date in terms of time)
+      Serial.println(" . Temp checksum passed");
+    } else {
+      Serial.println(" /!\\ Temp checksum failed");
+    }
+    Serial.print("Humidity: ");
+    Serial.print(temp_hum_val[0]);
+    Serial.print(" % \t");
+    Serial.print("Temperature: ");
+    Serial.print(temp_hum_val[1]);
+    Serial.println(" *C");
+  } else {
+    Serial.print("Update failed, error: ");
+    errorDecoder(g_shtc3.lastStatus);
+    Serial.println();
+  }
+#ifdef NEED_SSD1306
+  displayHT();
+#endif // NEED_SSD1306
+}
+#endif // NEED_SHTC3
 
 #ifdef NEED_EEPROM
 #include "SparkFun_External_EEPROM.h"
@@ -125,12 +270,115 @@ DHT dht(DHTPIN, DHTTYPE);
 #define PING_DELAY 300000 // 5 minutes
 double lastReading = 0;
 float temp_hum_val[2] = {0};
-void displayDHT();
+void displayDHT() {
+#ifdef NEED_SSD1306
+  oled.println("displayDHT");
+#endif // NEED_SSD1306
+  // Reading temperature or humidity takes about 250 milliseconds!
+  // Sensor readings may also be up to 2 seconds 'old' (it's a very slow sensor)
+  //  if (dht.readTempAndHumidity(temp_hum_val)) {
+  dht.readTempAndHumidity(temp_hum_val);
+  Serial.print("Humidity: ");
+  Serial.print(temp_hum_val[0]);
+  Serial.print(" % \t");
+  Serial.print("Temperature: ");
+  Serial.print(temp_hum_val[1]);
+  Serial.println(" *C");
+#ifdef NEED_SSD1306
+  displayHT();
+#endif // NEED_SSD1306
+}
 #endif // NEED_DHT
 
 #include "helper.h"
 #include "haversine.h"
 #include "SerialCommands.h"
+#include "Sx1262LoRandom.h"
+
+#ifdef NEED_RAK12500
+#include <SparkFun_u-blox_GNSS_Arduino_Library.h>
+//http://librarymanager/All#SparkFun_u-blox_GNSS
+SFE_UBLOX_GNSS g_myGNSS;
+long g_lastTime = 0;
+// Simple local timer. Limits amount of I2C traffic to u-blox module.
+double lastGNSSReading = 0;
+#define GNSS_DELAY 30000 // 30 seconds
+bool initGNSS() {
+  if (g_myGNSS.begin() == false) {
+    //Connect to the u-blox module using Wire port
+    Serial.println(F("u-blox GNSS not detected at default I2C address."));
+    return false;
+  }
+  g_myGNSS.setI2COutput(COM_TYPE_UBX);
+  //Set the I2C port to output UBX only (turn off NMEA noise)
+  g_myGNSS.saveConfigSelective(VAL_CFG_SUBSEC_IOPORT);
+  // Save (only) the communications port settings to flash and BBR
+  return true;
+}
+
+void showGNSSdata() {
+  g_latitude = g_myGNSS.getLatitude() / 1e7;
+  g_longitude = g_myGNSS.getLongitude() / 1e7;
+  g_altitude = g_myGNSS.getAltitude() / 1e3;
+  g_speed = g_myGNSS.getGroundSpeed() / 1e3;
+  g_heading = g_myGNSS.getHeading() / 1e5;
+  g_SIV = g_myGNSS.getSIV();
+  if (g_SIV > 0) {
+    sprintf((char*)msgBuf, "Lat: %3.7f ", (g_latitude));
+#ifdef NEED_SSD1306
+    oled.println((char*)msgBuf);
+#endif // NEED_SSD1306
+#ifdef NEED_DEBUG
+    Serial.print((char*)msgBuf);
+#endif //  NEED_DEBUG
+    sprintf((char*)msgBuf, "Long: %3.7f ", (g_longitude));
+#ifdef NEED_SSD1306
+    oled.println((char*)msgBuf);
+#endif // NEED_SSD1306
+#ifdef NEED_DEBUG
+    Serial.print((char*)msgBuf);
+#endif //  NEED_DEBUG
+    sprintf((char*)msgBuf, "Alt: %3.3f m", (g_altitude));
+#ifdef NEED_SSD1306
+    oled.println((char*)msgBuf);
+#endif // NEED_SSD1306
+#ifdef NEED_DEBUG
+    Serial.println((char*)msgBuf);
+#endif //  NEED_DEBUG
+    sprintf((char*)msgBuf, "Speed: %3.3f m/s ", (g_speed));
+#ifdef NEED_SSD1306
+    oled.println((char*)msgBuf);
+#endif // NEED_SSD1306
+#ifdef NEED_DEBUG
+    Serial.print((char*)msgBuf);
+#endif //  NEED_DEBUG
+    sprintf((char*)msgBuf, "Heading: %3.7f ", (g_heading));
+#ifdef NEED_SSD1306
+    oled.println((char*)msgBuf);
+#endif // NEED_SSD1306
+#ifdef NEED_DEBUG
+    Serial.print((char*)msgBuf);
+#endif //  NEED_DEBUG
+  }
+  sprintf((char*)msgBuf, "SIV: %d", g_SIV);
+#ifdef NEED_SSD1306
+  oled.println((char*)msgBuf);
+#endif // NEED_SSD1306
+#ifdef NEED_DEBUG
+  Serial.println((char*)msgBuf);
+#endif //  NEED_DEBUG
+  if (g_myGNSS.getTimeValid()) {
+    uint8_t hour = (g_myGNSS.getHour() + 8) % 24;
+    sprintf((char*)msgBuf, "GPS Time:\n%02d:%02d:%02d HKT", hour, g_myGNSS.getMinute(), g_myGNSS.getSecond());
+#ifdef NEED_SSD1306
+    oled.println((char*)msgBuf);
+#endif // NEED_SSD1306
+#ifdef NEED_DEBUG
+    Serial.println((char*)msgBuf);
+#endif //  NEED_DEBUG
+  }
+}
+#endif // NEED_RAK12500
 
 /*
   Welcome to role-assigned values: each machine will have a specific role,
@@ -174,7 +422,7 @@ void setup() {
 #endif // NEED_SIDE_I2C
 
   Wire.begin();
-  //Wire.setClock(100000);
+  Wire.setClock(400000);
 #ifdef NEED_SSD1306
   Serial.println("Setting up OLED");
   // Initialising the UI will init the display too.
@@ -197,11 +445,12 @@ void setup() {
 #endif // NEED_SSD1306
   if (myMem.begin() == false) {
 #ifdef NEED_DEBUG
-    Serial.println("   No memory detected. Freezing.");
+    Serial.print("   No memory detected. ");
+    Serial.println(F("Stopping now..."));
 #endif // NEED_DEBUG
 #ifdef NEED_SSD1306
     oled.println("No memory detected.");
-    oled.println("Freezing...");
+    oled.println(F("Stopping now..."));
 #endif // NEED_SSD1306
     while (1)
       ;
@@ -276,25 +525,64 @@ void setup() {
   bme680.setForcedMode();
 #endif // NEED_BME
 
+#ifdef NEED_SHTC3
+  // ---- SHTC3 STUFF ----
+#ifdef NEED_DEBUG
+  Serial.println("SHTC3 init");
+#endif // NEED_DEBUG
+#ifdef NEED_SSD1306
+  oled.println("SHTC3 init");
+#endif // NEED_SSD1306
+  // Most SHTC3 functions return a variable of the type "SHTC3_Status_TypeDef" to indicate the status of their execution
+  errorDecoder(g_shtc3.begin());
+#ifdef NEED_DEBUG
+  Serial.println("SHTC3 init");
+  Serial.print("Beginning sensor. Result = ");
+  // To start the sensor you must call "begin()", the default settings use Wire (default Arduino I2C port)
+  // The sensor is listed to work up to 1 MHz I2C speed, but the I2C clock speed is global for all sensors on that bus so using 400kHz or 100kHz is recommended
+  Serial.println();
+#endif // NEED_DEBUG
+  if (g_shtc3.passIDcrc) {
+    // Whenever data is received the associated checksum is calculated and verified so you can be sure the data is true
+    // The checksum pass indicators are: passIDcrc, passRHcrc, and passTcrc for the ID, RH, and T readings respectively
+#ifdef NEED_DEBUG
+    Serial.print("ID Passed Checksum. ");
+    Serial.print("Device ID: 0b");
+    Serial.println(g_shtc3.ID, BIN);
+#endif // NEED_DEBUG
+    // The 16-bit device ID can be accessed as a member variable of the object
+  } else {
+    Serial.println("SHTC3 ID Checksum Failed.");
+    Serial.println(F("Stopping now..."));
+    while (1);
+  }
+#endif // NEED_SHTC3
+
 #ifdef NEED_SSD1306
   oled.println("LoRa Setup");
 #endif // NEED_SSD1306
   lora_rak4630_init();
-  // fillRandom(randomStock, 256);
+  Serial.println(" . randomStock");
+  //  stockUpRandom();
+  Serial.println(" .            Done!");
   RadioEvents.TxDone = OnTxDone;
   RadioEvents.RxDone = OnRxDone;
-  RadioEvents.TxTimeout = NULL;
+  RadioEvents.TxTimeout = OnTxTimeout;
   RadioEvents.RxTimeout = OnRxTimeout;
   RadioEvents.RxError = OnRxError;
-  RadioEvents.CadDone = NULL;
+  RadioEvents.CadDone = OnCadDone;
   // Initialize the Radio
   Radio.Init(&RadioEvents);
   // Set Radio channel
   Radio.SetChannel(myFreq);
   // Set Radio RX configuration
-  Radio.SetTxConfig(MODEM_LORA, TxPower, 0, myBW, mySF, myCR, 8, false, true, 0, 0, false, 3000);
-  Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
-  // Start LoRa
+  Serial.println("mySF = " + String(mySF));
+  Serial.println("myBW = " + String(myBW));
+  Serial.println("myCR = " + String(myCR));
+  Serial.println("TxPower = " + String(TxPower));
+  // Radio.Standby();
+  Radio.SetTxConfig(MODEM_LORA, TxPower, 0, myBW, mySF, myCR - 4, 8, false, true, 0, 0, false, 3000);
+  Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR - 4, 0, 8, 0, false, 0, true, 0, 0, false, false);
   Serial.println("Starting Radio.Rx");
   Radio.Rx(RX_TIMEOUT_VALUE);
   SX126xSetTxParams(TxPower, RADIO_RAMP_40_US);
@@ -302,7 +590,7 @@ void setup() {
 #ifdef Pavel
   setDeviceName("Pavel");
 #else
-  setDeviceName("RAK4631");
+  setDeviceName("Naked RAK4631");
 #endif // Pavel
   pingFrequency = 60000;
   needPing = true;
@@ -431,9 +719,35 @@ void setup() {
 #endif // NEED_SSD1306
     }
   }
+  // ---- GNSS STUFF ----
+
+#ifdef NEED_RAK12500
+#ifdef NEED_DEBUG
+  Serial.println(F("GNSS setup"));
+#endif // NEED_DEBUG
+#ifdef NEED_SSD1306
+  oled.println(F("GNSS setup"));
+#endif // NEED_SSD1306
+
+  if (!initGNSS()) {
+    Serial.println(F("Stopping now..."));
+    while (1);
+  }
+#ifdef NEED_DEBUG
+  Serial.println(F("GNSS ON"));
+#endif // NEED_DEBUG
+#ifdef NEED_SSD1306
+  oled.println(F("GNSS ON"));
+#endif // NEED_SSD1306
+#endif // NEED_RAK12500
+
 #ifdef NEED_DEBUG
   Serial.println("Setup done...");
 #endif // NEED_DEBUG
+#ifdef NEED_SHTC3
+  displaySHTC3();
+  lastReading = millis();
+#endif // NEED_SHTC3
 #ifdef NEED_BME
   displayBME680();
   lastReading = millis();
@@ -457,6 +771,18 @@ void setup() {
 
 void loop() {
   double t0 = millis();
+#ifdef NEED_RAK12500
+  g_latitude = g_myGNSS.getLatitude() / 1e7;
+  g_longitude = g_myGNSS.getLongitude() / 1e7;
+  g_altitude = g_myGNSS.getAltitude() / 1e3;
+  g_speed = g_myGNSS.getGroundSpeed() / 1e3;
+  g_heading = g_myGNSS.getHeading() / 1e5;
+  g_SIV = g_myGNSS.getSIV();
+  if (t0 - lastGNSSReading >= GNSS_DELAY) {
+    showGNSSdata();
+    lastGNSSReading = millis();
+  }
+#endif // NEED_RAK12500
 #ifdef NEED_BME
   if (t0 - lastReading >= PING_DELAY) {
     displayBME680();
@@ -509,122 +835,18 @@ void loop() {
   }
 }
 
-#ifdef NEED_BME
-void displayBME680() {
 #ifdef NEED_SSD1306
-  oled.println("displayBME680");
-#endif // NEED_SSD1306
-#ifdef NEED_DEBUG
-  Serial.println("BME680");
-#endif // NEED_DEBUG
-  ClosedCube_BME680_Status status = bme680.readStatus();
-  if (status.newDataFlag) {
-    double temp = bme680.readTemperature();
-    double pres = bme680.readPressure();
-    double hum = bme680.readHumidity();
-    // save the values in the same global array, so that they can be sent in packets
-    temp_hum_val[0] = (float)hum;
-    temp_hum_val[1] = (float)temp;
-#ifdef NEED_SSD1306
-    displayHT();
-#endif // NEED_SSD1306
-#ifdef NEED_DEBUG
-    sprintf((char*)msgBuf, "result: T = % f C, RH = % f % %, P = % d hPa\n", temp, hum, pres);
-    Serial.println((char*)msgBuf);
-#endif // NEED_DEBUG
-    lastReading = millis();
-  }
-}
-#endif // NEED_DEBUG
-
-#ifdef NEED_DHT
-void displayDHT() {
-#ifdef NEED_SSD1306
-  oled.println("displayDHT");
-#endif // NEED_SSD1306
-  // Reading temperature or humidity takes about 250 milliseconds!
-  // Sensor readings may also be up to 2 seconds 'old' (it's a very slow sensor)
-  //  if (dht.readTempAndHumidity(temp_hum_val)) {
-  dht.readTempAndHumidity(temp_hum_val);
-  Serial.print("Humidity: ");
-  Serial.print(temp_hum_val[0]);
-  Serial.print(" % \t");
-  Serial.print("Temperature: ");
-  Serial.print(temp_hum_val[1]);
-  Serial.println(" *C");
-#ifdef NEED_SSD1306
-  displayHT();
-#endif // NEED_SSD1306
-  //  } else {
-  //    Serial.println("Failed to get temperature and humidity value.");
-  //  }
-}
-#endif // NEED_DHT
-
-#ifdef NEED_HDC1080
-void displayHDC1080() {
-  char buff[48];
-  temp_hum_val[0] = hdc1080.readHumidity();
-  temp_hum_val[1] = hdc1080.readTemperature();
-  sprintf(buff, "Temp: %2.2f C, Humidity: %2.2f%%\n", temp_hum_val[1], temp_hum_val[0]);
-  Serial.print(buff);
-#ifdef NEED_CCS811 // Linked to NEED_HDC1080
-  // Look for interrupt request from CCS811
-  if (digitalRead(PIN_NOT_INT) == 0) {
-    // Wake up the CCS811 logic engine
-    digitalWrite(PIN_NOT_WAKE, 0);
-    // Need to wait at least 50 µs
-    delay(1);
-    // Interrupt signal caught, so cause the CCS811 to run its algorithm
-    myCCS811.readAlgorithmResults(); // Calling this function updates the global tVOC and CO2 variables
-    tvoc_co2[0] = myCCS811.getTVOC();
-    tvoc_co2[1] = myCCS811.getCO2();
-    char buff[32];
-    sprintf(buff, "tVOC: %d co2: %d\n", tvoc_co2[0], tvoc_co2[1]);
-    Serial.print(buff);
-    // Now put the CCS811's logic engine to sleep
-    digitalWrite(PIN_NOT_WAKE, 1);
-    // Need to be asleep for at least 20 µs
-  }
-#endif // NEED_CCS811
-#ifdef NEED_SSD1306
-  displayHT();
-#endif // NEED_SSD1306
-}
-#endif // NEED_HDC1080
-
-#ifdef NEED_SGP30
-void displaySGP30() {
-  s16 err = 0;
-  u16 tvoc_ppb, co2_eq_ppm;
-  err = sgp_measure_iaq_blocking_read(&tvoc_ppb, &co2_eq_ppm);
-  if (err == STATUS_OK) {
-    tvoc_co2[0] = tvoc_ppb;
-    tvoc_co2[1] = co2_eq_ppm;
-    char buff[32];
-    sprintf(buff, "tVOC: %d co2: %d\n", tvoc_co2[0], tvoc_co2[1]);
-    Serial.print(buff);
-#ifdef NEED_SSD1306
-    displayHT();
-#endif // NEED_SSD1306
-  } else {
-    Serial.println("error reading IAQ values\n");
-  }
-}
-#endif // NEED_SGP30
-
-#ifdef NEED_SSD1306
-#if defined(NEED_HDC1080) || defined(NEED_BME) || defined(NEED_DHT)
+#if defined(NEED_HDC1080) || defined(NEED_BME) || defined(NEED_DHT) || defined(NEED_SHTC3)
 void displayHT() {
   char buff[32];
-  sprintf(buff, "H: %2.2f%% T: %2.2f *C\n", temp_hum_val[0], temp_hum_val[1]);
+  sprintf((char*)msgBuf, "H: %2.2f%% T: %2.2f *C\n", temp_hum_val[0], temp_hum_val[1]);
   oled.println(buff);
 #ifdef NEED_CCS811 // Linked to NEED_HDC1080
-  sprintf(buff, "tVOC: %d co2: %d\n", tvoc_co2[0], tvoc_co2[1]);
+  sprintf((char*)msgBuf, "tVOC: %d co2: %d\n", tvoc_co2[0], tvoc_co2[1]);
   oled.println(buff);
 #endif // NEED_CCS811
 #ifdef NEED_SGP30
-  sprintf(buff, "tVOC: %d co2: %d\n", tvoc_co2[0], tvoc_co2[1]);
+  sprintf((char*)msgBuf, "tVOC: %d co2: %d\n", tvoc_co2[0], tvoc_co2[1]);
   oled.println(buff);
 #endif // NEED_SGP30
 }
@@ -712,7 +934,12 @@ void shaTest() {
 #endif // NEED_SHATEST
 
 void OnTxDone(void) {
-  Serial.println("OnTxDone");
+#ifdef NEED_DEBUG
+  Serial.println("Packet sent!");
+#endif
+#ifdef NEED_SSD1306
+  oled.println("Packet sent!");
+#endif // NEED_SSD1306
   // if (bleUARTisConnected) {
   // bleuart.print("OnTxDone\n");
   // }
@@ -767,11 +994,8 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
   doc["snr"] = snr;
   serializeJson(doc, Serial); Serial.println("");
 #endif // NEED_DEBUG
-  // Print 4-byte ID
   const char *myID = doc["UUID"];
-  // Print sender
   const char *from = doc["from"];
-  // Print command
   const char *cmd = doc["cmd"];
   // Do we have a message?
 #ifdef NEED_SSD1306
@@ -791,33 +1015,41 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
     uint16_t tvoc = mydata.as<uint16_t>();
     mydata = doc["C"];
     uint16_t co2 = mydata.as<uint16_t>();
-    char buff[32];
-    sprintf(buff, "H: %2.2f%% T: %2.2f *C\n", tvoc, co2);
+    sprintf((char*)msgBuf, "H: %2.2f%% T: %2.2f *C\n", tvoc, co2);
 #ifdef NEED_DEBUG
-    Serial.print(buff);
+    Serial.print((char*)msgBuf);
 #endif // NEED_DEBUG
 #ifdef NEED_SSD1306
-    oled.print(buff);
+    oled.print((char*)msgBuf);
 #endif // NEED_SSD1306
   }
-
-  bool hasLatLong = true;
-  float tLat, tLong, tDistance;
+  float tLat, tLong, tDistance = -1.0;
   mydata = doc["lat"];
-  if (mydata.isNull()) {
-    // we don't have
-    hasLatLong = false;
-  } else {
+  if (!mydata.isNull()) {
     tLat = mydata.as<float>();
     mydata = doc["long"];
-    if (mydata.isNull()) {
-      // we don't have
-      hasLatLong = false;
-    } else {
+    if (!mydata.isNull()) {
       tLong = mydata.as<float>();
       // we now have both values AND hasLatLong = true
       // Display distance
-      tDistance = haversine(homeLatitude, homeLongitude, tLat, tLong);
+#ifdef NEED_RAK12500
+      // Lat/Long come from GNSS if available
+      if (g_SIV > 0) {
+        Serial.println("Calculating distance");
+        Serial.print("g_latitude: "); Serial.print(g_latitude);
+        Serial.print(", g_longitude: "); Serial.println(g_longitude);
+        tDistance = haversine(g_latitude, g_longitude, tLat, tLong);
+        Serial.print("tDistance: "); Serial.println(tDistance);
+        String td = String(tDistance, 3);
+        sprintf((char*)msgBuf, "Distance: %s m\n", td.c_str());
+#ifdef NEED_DEBUG
+        Serial.print((char*)msgBuf);
+#endif // NEED_DEBUG
+#ifdef NEED_SSD1306
+        oled.print((char*)msgBuf);
+#endif // NEED_SSD1306
+      }
+#endif // NEED_RAK12500
     }
   }
 #ifdef NEED_DEBUG
@@ -832,13 +1064,13 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
     Serial.print("Message: ");
     Serial.println(msg);
   }
-  if (hasLatLong) {
+  if (tDistance > -1.0) {
     Serial.print("Distance: ");
     if (tDistance >= 1000.0) {
-      Serial.print(tDistance / 1000.0);
+      Serial.print(tDistance / 1000.0, 3);
       Serial.println(" km");
     } else {
-      Serial.print(tDistance);
+      Serial.print(tDistance, 3);
       Serial.println(" m");
     }
   }
@@ -862,7 +1094,6 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
 #endif // NEED_DEBUG
     delay(dl);
     sendPong((char*)myID, rssi);
-    Radio.Rx(RX_TIMEOUT_VALUE);
   } else if (strcmp(cmd, "pong") == 0) {
     int rcvRSSI = doc["rcvRSSI"];
 #ifdef NEED_DEBUG
@@ -912,6 +1143,28 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
       oled.println(cO2);
 #endif // NEED_SSD1306
     }
+    float tLat, tLong, tDistance;
+    mydata = doc["lat"];
+    if (!mydata.isNull()) {
+      tLat = mydata.as<float>();
+      mydata = doc["long"];
+      if (!mydata.isNull()) {
+        tLong = mydata.as<float>();
+        // we now have both values AND hasLatLong = true
+        // Display distance
+#ifdef NEED_RAK12500
+        // Lat/Long come from GNSS if available
+        tDistance = haversine(g_latitude, g_longitude, tLat, tLong);
+        sprintf((char*)msgBuf, "%4.3 m\n", tDistance);
+#ifdef NEED_DEBUG
+        Serial.print((char*)msgBuf);
+#endif // NEED_DEBUG
+#ifdef NEED_SSD1306
+        oled.print((char*)msgBuf);
+#endif // NEED_SSD1306
+#endif // NEED_RAK12500
+      }
+    }
   } else if (strcmp(cmd, "freq") == 0) {
     // Do we have a frequency change request?
     if (strcmp(from, "BastMobile") != 0) return;
@@ -932,7 +1185,7 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
 #endif // NEED_DEBUG
       } else {
         myFreq = fq;
-        Radio.Standby();
+        // Radio.Standby();
         Radio.SetChannel(myFreq);
         delay(100);
         Radio.Rx(RX_TIMEOUT_VALUE);
@@ -992,8 +1245,9 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
 #endif // NEED_DEBUG
       } else {
         myBW = bw;
-        Radio.Standby();
-        Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
+        // Radio.Standby();
+        Radio.SetTxConfig(MODEM_LORA, TxPower, 0, myBW, mySF, myCR - 4, 8, false, true, 0, 0, false, 30000);
+        Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR - 4, 0, 8, 0, false, 0, true, 0, 0, false, false);
         delay(100);
         Radio.Rx(RX_TIMEOUT_VALUE);
 #ifdef NEED_DEBUG
@@ -1026,7 +1280,9 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
 #endif // NEED_DEBUG
       } else {
         mySF = sf;
-        Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
+        // Radio.Standby();
+        Radio.SetTxConfig(MODEM_LORA, TxPower, 0, myBW, mySF, myCR - 4, 8, false, true, 0, 0, false, 30000);
+        Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR - 4, 0, 8, 0, false, 0, true, 0, 0, false, false);
 #ifdef NEED_DEBUG
         Serial.println("SF set to " + String(sf));
 #endif // NEED_DEBUG
@@ -1061,7 +1317,9 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
       myFreq = F * 1e6;
       mySF = S;
       myBW = B;
-      Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
+      // Radio.Standby();
+      Radio.SetTxConfig(MODEM_LORA, TxPower, 0, myBW, mySF, myCR - 4, 8, false, true, 0, 0, false, 30000);
+      Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR - 4, 0, 8, 0, false, 0, true, 0, 0, false, false);
       sendPong((char*)myID, rssi);
 #ifdef NEED_SSD1306
       oled.print("New freq: ");
@@ -1076,15 +1334,64 @@ void OnRxDone(uint8_t *payload, uint16_t ix, int16_t rssi, int8_t snr) {
 }
 
 void OnRxTimeout(void) {
-  //  u8g2.clearBuffer(); // clear the internal memory
-  //  u8g2.setFont(u8g2_font_courB08_tf); // choose a suitable font
-  //  u8g2.drawStr(3, 15, "OnRxTimeout");
-  //  u8g2.sendBuffer(); // transfer internal memory to the display
-  Serial.println("OnRxTimeout");
+#ifdef NEED_DEBUG
+  Serial.println("Rx Timeout!\n");
+#endif // NEED_DEBUG
+#ifdef NEED_SSD1306
+  oled.println("Rx Timeout!");
+#endif // NEED_SSD1306
   Radio.Rx(RX_TIMEOUT_VALUE);
 }
 
 void OnRxError(void) {
-  Serial.println("OnRxError");
+#ifdef NEED_DEBUG
+  Serial.println("Rx Error!\n");
+#endif // NEED_DEBUG
+#ifdef NEED_SSD1306
+  oled.println("Rx Error!");
+#endif // NEED_SSD1306
+  Radio.Rx(RX_TIMEOUT_VALUE);
+}
+
+/**@brief Function to be executed on Radio Tx Timeout event
+*/
+void OnTxTimeout(void) {
+  // Radio.Sleep();
+#ifdef NEED_DEBUG
+  Serial.println("Tx Timeout!\n");
+#endif // NEED_DEBUG
+#ifdef NEED_SSD1306
+  oled.println("Tx Timeout!");
+#endif // NEED_SSD1306
+}
+
+/**@brief Function to be executed on Radio Rx Error event
+*/
+void OnCadDone(bool cadResult) {
+  time_t duration = millis() - cadTime;
+  if (cadResult) {
+#ifdef NEED_DEBUG
+    Serial.printf("CAD returned channel busy after %ldms\n", duration);
+#endif // NEED_DEBUG
+#ifdef NEED_SSD1306
+    oled.println("CAD busy!");
+#endif // NEED_SSD1306
+  } else {
+    digitalWrite(LED_BLUE, HIGH);
+    if (needEncryption) {
+      Serial.println("encBuf [" + String(encLen) + "]:");
+      hexDump(encBuf, encLen);
+      Radio.Send(encBuf, encLen);
+    } else {
+      Radio.Send((uint8_t *)msgBuf, strlen((char*)msgBuf));
+    }
+#ifdef NEED_DEBUG
+    Serial.println("Packet sent!");
+#endif // NEED_DEBUG
+#ifdef NEED_SSD1306
+    oled.println("Packet sent!");
+#endif // NEED_SSD1306
+    digitalWrite(LED_BLUE, LOW);
+  }
   Radio.Rx(RX_TIMEOUT_VALUE);
 }

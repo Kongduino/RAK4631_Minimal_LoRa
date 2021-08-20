@@ -57,19 +57,19 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 
 uint8_t myMode = ECB;
 bool needEncryption = true;
-bool needAuthentification = true;
-bool pongBack = true;
+bool needAuthentification = false;
+bool pongBack = false;
 bool OCP_ON = false, PA_BOOST = true;
 uint8_t SecretKey[33] = "YELLOW SUBMARINEENIRAMBUS WOLLEY";
 char deviceName[33];
 #define BUFF_LENGTH 512
 uint8_t encBuf[BUFF_LENGTH], hexBuf[BUFF_LENGTH], msgBuf[BUFF_LENGTH];
-uint8_t randomStock[256];
+uint16_t encLen;
 uint8_t randomIndex = 0;
 float lastBattery = 0.0;
 double batteryUpdateDelay;
-uint32_t myFreq = 863e6;
-int mySF = 7;
+uint32_t myFreq = 868.125e6;
+int mySF = 9;
 uint8_t myBW = 0;
 uint8_t myCR = 5;
 // See above
@@ -79,6 +79,15 @@ double BWs[10] = {
   125.0, 250.0, 500.0, 62.5, 41.7, 31.25, 20.8, 15.6, 10.4, 7.8
 };
 uint16_t pingCounter = 0;
+uint8_t randomStock[256];
+time_t cadTime;
+
+long g_latitude;
+long g_longitude;
+long g_altitude;
+long g_speed;
+long g_heading;
+byte g_SIV;
 
 #define RX_TIMEOUT_VALUE 30000
 
@@ -93,8 +102,6 @@ bool needPing = false;
 #endif
 
 double lastAutoPing = 0;
-float homeLatitude = 22.4591126;
-float homeLongitude = 114.0003769;
 uint8_t TxPower = 20;
 
 // Sets of Freq / SF / BW settings
@@ -126,7 +133,8 @@ void savePrefs();
 void setAutoPing(char *);
 void handleSerial();
 uint8_t calcMaxPayload();
-bool testLoRaBusy();
+void hexDump(unsigned char *, uint16_t);
+void fillRandom();
 
 void hex2array(uint8_t *src, uint8_t *dst, size_t sLen) {
   size_t i, n = 0;
@@ -198,8 +206,6 @@ void setPWD(char *buff) {
 }
 
 void sendPacket(char *buff) {
-  Radio.Standby();
-  // LoRa.writeRegister(REG_LNA, 00); // TURN OFF LNA FOR TRANSMIT
   uint16_t olen = strlen(buff);
   memcpy(encBuf + 8, buff, olen);
   // prepend UUID
@@ -231,22 +237,11 @@ void sendPacket(char *buff) {
   Serial.print("Sending packet...");
 #endif
   // Now send a packet
-  digitalWrite(LED_BLUE, HIGH);
+  encLen = olen;
   Radio.Standby();
-  delay(100);
-  Radio.Send(hexBuf, olen);
-  if (needEncryption) {
-    Radio.Send(hexBuf, olen);
-  } else {
-    Radio.Send((uint8_t *)buff, olen);
-  }
-  delay(1000);
-#ifdef NEED_DEBUG
-  Serial.println(" done!");
-#endif
-  delay(500);
-  digitalWrite(LED_BLUE, LOW);
-  Radio.Rx(RX_TIMEOUT_VALUE);
+  Radio.SetCadParams(LORA_CAD_08_SYMBOL, myBW + 13, 10, LORA_CAD_ONLY, 0);
+  cadTime = millis();
+  Radio.StartCad();
 }
 
 int16_t decryptECB(uint8_t* myBuf, uint8_t olen) {
@@ -386,7 +381,7 @@ uint16_t encryptECB(uint8_t* myBuf) {
 }
 
 void stockUpRandom() {
-  fillRandom(randomStock, 256);
+  fillRandom();
   randomIndex = 0;
 #ifdef NEED_DEBUG
   if (NEED_DEBUG > 0) {
@@ -489,8 +484,9 @@ void setSF(char* buff) {
     oled.println(mpl);
 #endif // NEED_SSD1306
     savePrefs();
-    Radio.Standby();
-    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
+    // Radio.Standby();
+    Radio.SetTxConfig(MODEM_LORA, TxPower, 0, myBW, mySF, myCR - 4, 8, false, true, 0, 0, false, 3000);
+    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR - 4, 0, 8, 0, false, 0, true, 0, 0, false, false);
     delay(100);
     Radio.Rx(RX_TIMEOUT_VALUE);
   }
@@ -534,8 +530,9 @@ void setBW(char* buff) {
     oled.println(mpl);
 #endif // NEED_SSD1306
     savePrefs();
-    Radio.Standby();
-    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
+    // Radio.Standby();
+    Radio.SetTxConfig(MODEM_LORA, TxPower, 0, myBW, mySF, myCR - 4, 8, false, true, 0, 0, false, 3000);
+    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR - 4, 0, 8, 0, false, 0, true, 0, 0, false, false);
     delay(100);
     Radio.Rx(RX_TIMEOUT_VALUE);
   }
@@ -550,8 +547,9 @@ void setTxPower(char* buff) {
   } else {
     String s = "TxPower set to: " + String(txp);
     TxPower = txp;
-    Radio.Standby();
-    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
+    // Radio.Standby();
+    Radio.SetTxConfig(MODEM_LORA, TxPower, 0, myBW, mySF, myCR - 4, 8, false, true, 0, 0, false, 3000);
+    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR - 4, 0, 8, 0, false, 0, true, 0, 0, false, false);
     delay(100);
     Radio.Rx(RX_TIMEOUT_VALUE);
 #ifdef NEED_DEBUG
@@ -570,8 +568,9 @@ void setCR(char* buff) {
   } else {
     String s = "C/R set to: " + String(cr);
     myCR = cr;
-    Radio.Standby();
-    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR, 0, 8, 0, false, 0, true, 0, 0, false, true);
+    // Radio.Standby();
+    Radio.SetTxConfig(MODEM_LORA, TxPower, 0, myBW, mySF, myCR - 4, 8, false, true, 0, 0, false, 3000);
+    Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR - 4, 0, 8, 0, false, 0, true, 0, 0, false, false);
     delay(100);
     Radio.Rx(RX_TIMEOUT_VALUE);
 #ifdef NEED_DEBUG
@@ -629,35 +628,11 @@ void sendJSONPacket() {
   Serial.println("Sending packet...");
 #endif
   // Now send a packet
-  if (testLoRaBusy()) {
-#ifdef NEED_DEBUG
-    Serial.println("\n /!\\ LoRa is busy, aborting...");
-    return;
-#endif
-  }
+  encLen = olen;
   Radio.Standby();
-  if (needEncryption) {
-    hexDump(encBuf, olen);
-    Radio.Send(encBuf, olen);
-  } else {
-    Radio.Send(msgBuf, olen);
-  }
-  delay(1000);
-  Radio.Rx(RX_TIMEOUT_VALUE);
-  /*
-    RegRssiValue (0x1B)
-    Current RSSI value (dBm)
-    RSSI[dBm] = -157 + Rssi (using HF output port) or
-    RSSI[dBm] = -164 + Rssi (using LF output port)
-    Let's see if it has any meaning
-  */
-#ifdef NEED_DEBUG
-  Serial.println(" done!");
-#endif
-  delay(500);
-  digitalWrite(LED_BLUE, LOW);
-  Radio.Rx(RX_TIMEOUT_VALUE);
-  Radio.Write(REG_RX_GAIN, 0x96); // TURN ON LNA FOR RECEIVE
+  Radio.SetCadParams(LORA_CAD_08_SYMBOL, myBW + 13, 10, LORA_CAD_ONLY, 0);
+  cadTime = millis();
+  Radio.StartCad();
 }
 
 void sendPing() {
@@ -676,10 +651,12 @@ void sendPing() {
   char freq[8];
   snprintf( freq, 8, "%f", float(myFreq / 1e6) );
   doc["freq"] = freq;
-  // Lat/Long are hard-coded for the moment
-  doc["lat"] = homeLatitude;
-  doc["long"] = homeLongitude;
-#if defined(NEED_DHT) || defined(NEED_BME) || defined(NEED_HDC1080)
+#ifdef NEED_RAK12500
+  // Lat/Long come from GNSS if available
+  doc["lat"] = g_latitude;
+  doc["long"] = g_longitude;
+#endif // NEED_RAK12500
+#if defined(NEED_DHT) || defined(NEED_BME) || defined(NEED_HDC1080) || defined(NEED_SHTC3)
   doc["H"] = temp_hum_val[0];
   doc["T"] = temp_hum_val[1];
 #ifdef NEED_CCS811
@@ -691,17 +668,8 @@ void sendPing() {
   doc["C"] = tvoc_co2[1];
 #endif // NEED_SGP30
 #endif // NEED_DHT || NEED_BME || NEED_HDC1080
-
   serializeJson(doc, (char*)msgBuf, BUFF_LENGTH);
   sendJSONPacket();
-
-#ifdef NEED_DEBUG
-  Serial.println("PING sent!");
-#endif
-#ifdef NEED_SSD1306
-  oled.println("PING sent!");
-#endif // NEED_SSD1306
-  delay(1000);
   lastAutoPing = millis();
   // sending a ping, even manually, resets the clock
 }
@@ -719,7 +687,7 @@ void sendPong(char *msgID, int rssi) {
   memcpy(x, deviceName, 33);
   doc["from"] = x;
   doc["rcvRSSI"] = rssi;
-#if defined(NEED_DHT) || defined(NEED_BME) || defined(NEED_HDC1080)
+#if defined(NEED_DHT) || defined(NEED_BME) || defined(NEED_HDC1080) || defined(NEED_SHTC3)
   doc["H"] = temp_hum_val[0];
   doc["T"] = temp_hum_val[1];
 #ifdef NEED_CCS811
@@ -732,13 +700,6 @@ void sendPong(char *msgID, int rssi) {
   // doc["freq"] = freq;
   serializeJson(doc, (char*)msgBuf, BUFF_LENGTH);
   sendJSONPacket();
-#ifdef NEED_DEBUG
-  Serial.println("PONG sent!");
-#endif
-#ifdef NEED_SSD1306
-  oled.println("PONG sent!");
-#endif // NEED_SSD1306
-  delay(1000);
 }
 
 void savePrefs() {
@@ -812,28 +773,4 @@ uint8_t calcMaxPayload() {
     if ((mySF == 10 || mySF == 11 || mySF == 12) & (myBW == 0)) return 51;
     return 0;
   } else return 0;
-}
-
-bool testLoRaBusy() {
-  digitalWrite(LED_BLUE, HIGH);
-  digitalWrite(LED_GREEN, LOW);
-  uint8_t status = 255;
-  int PIN_LORA_BUSY = 29; // LORA SPI BUSY
-  int timeout = 3000;
-  while (digitalRead(PIN_LORA_BUSY) == HIGH) {
-    delay(250);
-    digitalWrite(LED_GREEN, status);
-    status = 255 - status;
-    digitalWrite(LED_BLUE, status);
-    timeout -= 1;
-    if (timeout < 0) {
-      Serial.println("[SX126xWaitOnBusy] Timeout waiting for BUSY low");
-      digitalWrite(LED_BLUE, LOW);
-      digitalWrite(LED_GREEN, HIGH);
-      return true;
-    }
-  }
-  digitalWrite(LED_BLUE, LOW);
-  digitalWrite(LED_GREEN, HIGH);
-  return false;
 }

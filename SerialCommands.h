@@ -2,6 +2,9 @@ void displayHDC1080();
 void displayHT();
 void displaySGP30();
 void displayDHT();
+void displayBME680();
+void displaySHTC3();
+void i2cScanner();
 
 void handleSerial() {
   memset(msgBuf, 0, BUFF_LENGTH);
@@ -15,17 +18,18 @@ void handleSerial() {
   if (c == '/') {
     c = msgBuf[1];
     char c1 = msgBuf[2];
+    char c2 = msgBuf[3];
     if (c == '>') {
       char buff[256];
       strcpy(buff, (char*)msgBuf + 2);
 #ifdef NEED_SSD1306
-      oled.print("Sending msg...");
+      oled.println("Sending msg...");
 #endif // NEED_SSD1306
       prepareJSONPacket(buff);
       sendJSONPacket();
-#ifdef NEED_SSD1306
-      oled.println(" done");
-#endif // NEED_SSD1306
+      return;
+    } else if (c == 'i' && c1 == '2' && c2 == 'c') {
+      i2cScanner();
       return;
     } else if (c == 'D' && c1 == 'N') {
       setDeviceName((char*)msgBuf + 3);
@@ -274,6 +278,13 @@ void showHelp() {
 #endif
   Serial.print(buff);
 
+#ifdef NEED_SHTC3
+  sprintf(buff, " |%-18s|%32s|\n", " NEED_SHTC3", "ON");
+#else
+  sprintf(buff, " |%-18s|%32s|\n", " NEED_SHTC3", "OFF");
+#endif
+  Serial.print(buff);
+
 #ifdef NEED_HDC1080
   sprintf(buff, " |%-18s|%32s|\n", " NEED_HDC1080", "ON");
 #else
@@ -288,4 +299,19 @@ void showHelp() {
 #endif
   Serial.print(buff);
   Serial.println(" +==================+================================+");
+}
+
+void i2cScanner() {
+  memset(msgBuf, 0, 128);
+  uint8_t addr, cnt = 0, error;
+  for (addr = 1; addr < 128; addr++) {
+    Wire.beginTransmission(addr);
+    error = Wire.endTransmission();
+    if (error == 0) {
+      msgBuf[addr] = addr;
+      cnt++;
+    }
+  }
+  Serial.println("I2C devices found: " + String(cnt));
+  hexDump(msgBuf, 128);
 }
