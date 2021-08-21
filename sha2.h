@@ -114,5 +114,4 @@ typedef struct {
 #ifdef __cplusplus
 }
 #endif
-
 #endif /* !SHA2_H */

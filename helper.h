@@ -69,7 +69,7 @@ uint8_t randomIndex = 0;
 float lastBattery = 0.0;
 double batteryUpdateDelay;
 uint32_t myFreq = 868.125e6;
-int mySF = 9;
+int mySF = 7;
 uint8_t myBW = 0;
 uint8_t myCR = 5;
 // See above
@@ -82,14 +82,19 @@ uint16_t pingCounter = 0;
 uint8_t randomStock[256];
 time_t cadTime;
 
-long g_latitude;
-long g_longitude;
+long g_latitude = 22.459252;
+long g_longitude = 114.00075; // home for Pavel
 long g_altitude;
 long g_speed;
 long g_heading;
 byte g_SIV;
 
-#define RX_TIMEOUT_VALUE 30000
+#define LORA_PREAMBLE_LENGTH 8  // Same for Tx and Rx
+#define LORA_SYMBOL_TIMEOUT 0 // Symbols
+#define LORA_FIX_LENGTH_PAYLOAD_ON false
+#define LORA_IQ_INVERSION_ON false
+#define RX_TIMEOUT_VALUE 0xFFFFFF // 30000
+#define TX_TIMEOUT_VALUE 10000
 
 #ifdef Pavel
 // enable autoPing for Pavel
@@ -238,7 +243,7 @@ void sendPacket(char *buff) {
 #endif
   // Now send a packet
   encLen = olen;
-  Radio.Standby();
+  Radio.Sleep();
   Radio.SetCadParams(LORA_CAD_08_SYMBOL, myBW + 13, 10, LORA_CAD_ONLY, 0);
   cadTime = millis();
   Radio.StartCad();
@@ -629,10 +634,28 @@ void sendJSONPacket() {
 #endif
   // Now send a packet
   encLen = olen;
-  Radio.Standby();
+  Radio.Sleep();
   Radio.SetCadParams(LORA_CAD_08_SYMBOL, myBW + 13, 10, LORA_CAD_ONLY, 0);
   cadTime = millis();
   Radio.StartCad();
+  /*
+    digitalWrite(LED_BLUE, HIGH);
+    if (needEncryption) {
+    Serial.println("encBuf [" + String(encLen) + "]:");
+    hexDump(encBuf, encLen);
+    Radio.Send(encBuf, encLen);
+    } else {
+    Radio.Send((uint8_t *)msgBuf, strlen((char*)msgBuf));
+    }
+    #ifdef NEED_DEBUG
+    Serial.println("Packet sent!");
+    #endif // NEED_DEBUG
+    #ifdef NEED_SSD1306
+    oled.println("Packet sent!");
+    #endif // NEED_SSD1306
+    digitalWrite(LED_BLUE, LOW);
+    Radio.Rx(RX_TIMEOUT_VALUE);
+  */
 }
 
 void sendPing() {
@@ -651,11 +674,14 @@ void sendPing() {
   char freq[8];
   snprintf( freq, 8, "%f", float(myFreq / 1e6) );
   doc["freq"] = freq;
-#ifdef NEED_RAK12500
-  // Lat/Long come from GNSS if available
-  doc["lat"] = g_latitude;
-  doc["long"] = g_longitude;
-#endif // NEED_RAK12500
+
+  if (g_SIV > 0) {
+    // Lat/Long come from GNSS if available
+    // Or if we set g_SIV = 1 for Pavel
+    doc["lat"] = g_latitude;
+    doc["long"] = g_longitude;
+  }
+
 #if defined(NEED_DHT) || defined(NEED_BME) || defined(NEED_HDC1080) || defined(NEED_SHTC3)
   doc["H"] = temp_hum_val[0];
   doc["T"] = temp_hum_val[1];

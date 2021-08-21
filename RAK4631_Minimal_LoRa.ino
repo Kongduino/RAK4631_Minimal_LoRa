@@ -13,7 +13,7 @@
 // Uncomment this next line if you want to use a DHTxx
 //#define NEED_DHT
 // Uncomment this next line if you want to use an SSD1306 OLED
-//#define NEED_SSD1306 1
+#define NEED_SSD1306 1
 // Detect the presence of an OLED at 0x2c/0x3d
 // Larry Bank has code for that
 // Uncomment this next line if you want to use an HDC1080
@@ -29,7 +29,7 @@
 // Uncomment this next line if you want to do a SHA self-test
 // #define NEED_SHATEST
 // Uncomment this next line if you want to use the RAK12500 WisBlock GNSS Location Module
-//#define NEED_RAK12500
+#define NEED_RAK12500
 
 #include <SPI.h>
 #include <Wire.h>
@@ -323,6 +323,14 @@ void showGNSSdata() {
   g_speed = g_myGNSS.getGroundSpeed() / 1e3;
   g_heading = g_myGNSS.getHeading() / 1e5;
   g_SIV = g_myGNSS.getSIV();
+  sprintf((char*)msgBuf, "SIV: %d", g_SIV);
+#ifdef NEED_SSD1306
+  oled.println((char*)msgBuf);
+#endif // NEED_SSD1306
+#ifdef NEED_DEBUG
+  Serial.println((char*)msgBuf);
+#endif //  NEED_DEBUG
+  // If there are no satellites in sight, why bother?
   if (g_SIV > 0) {
     sprintf((char*)msgBuf, "Lat: %3.7f ", (g_latitude));
 #ifdef NEED_SSD1306
@@ -360,13 +368,6 @@ void showGNSSdata() {
     Serial.print((char*)msgBuf);
 #endif //  NEED_DEBUG
   }
-  sprintf((char*)msgBuf, "SIV: %d", g_SIV);
-#ifdef NEED_SSD1306
-  oled.println((char*)msgBuf);
-#endif // NEED_SSD1306
-#ifdef NEED_DEBUG
-  Serial.println((char*)msgBuf);
-#endif //  NEED_DEBUG
   if (g_myGNSS.getTimeValid()) {
     uint8_t hour = (g_myGNSS.getHour() + 8) % 24;
     sprintf((char*)msgBuf, "GPS Time:\n%02d:%02d:%02d HKT", hour, g_myGNSS.getMinute(), g_myGNSS.getSecond());
@@ -562,7 +563,7 @@ void setup() {
   oled.println("LoRa Setup");
 #endif // NEED_SSD1306
   lora_rak4630_init();
-  Serial.println(" . randomStock");
+  //  Serial.println(" . randomStock");
   //  stockUpRandom();
   Serial.println(" .            Done!");
   RadioEvents.TxDone = OnTxDone;
@@ -581,16 +582,23 @@ void setup() {
   Serial.println("myCR = " + String(myCR));
   Serial.println("TxPower = " + String(TxPower));
   // Radio.Standby();
-  Radio.SetTxConfig(MODEM_LORA, TxPower, 0, myBW, mySF, myCR - 4, 8, false, true, 0, 0, false, 3000);
-  Radio.SetRxConfig(MODEM_LORA, myBW, mySF, myCR - 4, 0, 8, 0, false, 0, true, 0, 0, false, false);
+  Radio.SetTxConfig(
+    MODEM_LORA, TxPower, 0, myBW, mySF, myCR - 4,
+    LORA_PREAMBLE_LENGTH, LORA_FIX_LENGTH_PAYLOAD_ON,
+    true, 0, 0, LORA_IQ_INVERSION_ON, TX_TIMEOUT_VALUE);
+  Radio.SetRxConfig(
+    MODEM_LORA, myBW, mySF, myCR - 4, 0, LORA_PREAMBLE_LENGTH,
+    LORA_SYMBOL_TIMEOUT, LORA_FIX_LENGTH_PAYLOAD_ON,
+    0, true, 0, 0, LORA_IQ_INVERSION_ON, true);
   Serial.println("Starting Radio.Rx");
   Radio.Rx(RX_TIMEOUT_VALUE);
-  SX126xSetTxParams(TxPower, RADIO_RAMP_40_US);
+  // SX126xSetTxParams(TxPower, RADIO_RAMP_40_US);
 
 #ifdef Pavel
   setDeviceName("Pavel");
+  g_SIV = 1;
 #else
-  setDeviceName("Naked RAK4631");
+  setDeviceName("OLED RAK4631");
 #endif // Pavel
   pingFrequency = 60000;
   needPing = true;
@@ -684,41 +692,43 @@ void setup() {
 
 #endif // NEED_HDC1080
 
-#ifdef NEED_SSD1306
-  oled.println("Sets");
-#endif // NEED_SSD1306
-  DeserializationError error = deserializeJson(sets, "{\"freq\":[868,868.125,868.125],\"sf\":[12,9,9],\"bw\":[9,8,6]}");
-  if (error) {
-#ifdef NEED_SSD1306
-    oled.println("\ndeserializeJson failed");
-#endif // NEED_SSD1306
-#ifdef NEED_DEBUG
-    Serial.println(F("\ndeserializeJson() in Sets failed!"));
-    hexDump(msgBuf, BUFF_LENGTH);
-#endif // NEED_DEBUG
-  } else {
-    setsFQ = sets["freq"];
-    setsSF = sets["sf"];
-    setsBW = sets["bw"];
-    uint8_t i, j = setsFQ.size();
-#ifdef NEED_DEBUG
-    Serial.println("\n\n" + String(j) + " Sets:");
-#endif // NEED_DEBUG
-    for (i = 0; i < j; i++) {
-      float F = setsFQ[i];
-      int S = setsSF[i];
-      int B = setsBW[i];
-#ifdef NEED_DEBUG
-      sprintf((char*)msgBuf, " . Freq: %3.3f MHz, SF %d, BW %d: %3.2f", F, S, B, BWs[B]);
-      Serial.println((char*)msgBuf);
-#endif // NEED_DEBUG
-#ifdef NEED_SSD1306
-      oled.print("Freq["); oled.print(i); oled.print("]: "); oled.println(String(F, 3) + " MHz");
-      oled.print("SF["); oled.print(i); oled.print("]: "); oled.println(S);
-      oled.print("BW["); oled.print(i); oled.print("]: "); oled.print(B); oled.print(" ie "); oled.println(BWs[B]);
-#endif // NEED_SSD1306
+  /*
+    #ifdef NEED_SSD1306
+    oled.println("Sets");
+    #endif // NEED_SSD1306
+    DeserializationError error = deserializeJson(sets, "{\"freq\":[868,868.125,868.125],\"sf\":[12,9,9],\"bw\":[9,8,6]}");
+    if (error) {
+    #ifdef NEED_SSD1306
+      oled.println("\ndeserializeJson failed");
+    #endif // NEED_SSD1306
+    #ifdef NEED_DEBUG
+      Serial.println(F("\ndeserializeJson() in Sets failed!"));
+      hexDump(msgBuf, BUFF_LENGTH);
+    #endif // NEED_DEBUG
+    } else {
+      setsFQ = sets["freq"];
+      setsSF = sets["sf"];
+      setsBW = sets["bw"];
+      uint8_t i, j = setsFQ.size();
+    #ifdef NEED_DEBUG
+      Serial.println("\n\n" + String(j) + " Sets:");
+    #endif // NEED_DEBUG
+      for (i = 0; i < j; i++) {
+        float F = setsFQ[i];
+        int S = setsSF[i];
+        int B = setsBW[i];
+    #ifdef NEED_DEBUG
+        sprintf((char*)msgBuf, " . Freq: %3.3f MHz, SF %d, BW %d: %3.2f", F, S, B, BWs[B]);
+        Serial.println((char*)msgBuf);
+    #endif // NEED_DEBUG
+    #ifdef NEED_SSD1306
+        oled.print("Freq["); oled.print(i); oled.print("]: "); oled.println(String(F, 3) + " MHz");
+        oled.print("SF["); oled.print(i); oled.print("]: "); oled.println(S);
+        oled.print("BW["); oled.print(i); oled.print("]: "); oled.print(B); oled.print(" ie "); oled.println(BWs[B]);
+    #endif // NEED_SSD1306
+      }
     }
-  }
+  */
   // ---- GNSS STUFF ----
 
 #ifdef NEED_RAK12500
@@ -728,9 +738,19 @@ void setup() {
 #ifdef NEED_SSD1306
   oled.println(F("GNSS setup"));
 #endif // NEED_SSD1306
-
+  pinMode(WB_IO2, OUTPUT);
+  pinMode(WB_IO1, OUTPUT);
+  digitalWrite(WB_IO2, 0);
+  digitalWrite(WB_IO1, 0);
+  delay(1000);
+  digitalWrite(WB_IO2, 1);
+  digitalWrite(WB_IO1, 1);
+  delay(1000);
   if (!initGNSS()) {
-    Serial.println(F("Stopping now..."));
+    Serial.println(F("No GNSS: Stopping now..."));
+#ifdef NEED_SSD1306
+    oled.println(F("No GNSS: Stopping..."));
+#endif // NEED_SSD1306
     while (1);
   }
 #ifdef NEED_DEBUG
@@ -783,6 +803,7 @@ void loop() {
     lastGNSSReading = millis();
   }
 #endif // NEED_RAK12500
+
 #ifdef NEED_BME
   if (t0 - lastReading >= PING_DELAY) {
     displayBME680();
@@ -1337,9 +1358,6 @@ void OnRxTimeout(void) {
 #ifdef NEED_DEBUG
   Serial.println("Rx Timeout!\n");
 #endif // NEED_DEBUG
-#ifdef NEED_SSD1306
-  oled.println("Rx Timeout!");
-#endif // NEED_SSD1306
   Radio.Rx(RX_TIMEOUT_VALUE);
 }
 
